@@ -1,0 +1,16 @@
+{
+  "name": "mirabom",
+  "version": "0.1.0",
+  "description": "MCP MIR implementation in NodeJS.",
+  "main": "service.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Robert Aarts",
+  "license": "ISC",
+  "dependencies": {
+    "lokijs": "^1.5.12",
+    "pem": "^1.14.4",
+    "tmp-promise": "^3.0.2"
+  }
+}
