@@ -1,5 +1,4 @@
 const webcrypto = require('crypto').webcrypto
-const dayjs = require('dayjs')
 const asn1 = require('asn1js')
 const pki = require('pkijs')
 const oid = require('./mcp-oids')
@@ -18,7 +17,7 @@ class MCPCertificate extends pki.Certificate {
     this._setSubjectAltNames(subject)
   }
 
-  _addTypesAndValues(typesAndValues, obj) {
+  _addTypesAndValues (typesAndValues, obj) {
     typesAndValues.push(...Object.keys(obj).map(attr => {
       let asn1Type = asn1.Utf8String
       const value = obj[attr]
@@ -29,15 +28,15 @@ class MCPCertificate extends pki.Certificate {
     }))  
   }
   
-  _setIssuer(obj) {
+  setIssuer (obj) {
     this._addTypesAndValues(this.issuer.typesAndValues, obj)
   }
   
-  _setDN(obj) {
+  _setDN (obj) {
     this._addTypesAndValues(this.subject.typesAndValues, obj)
   }
   
-  _setSubjectAltNames(obj) {
+  _setSubjectAltNames (obj) {
     const SAN = obj.SAN
     if (! (SAN && typeof SAN === 'object' && Object.keys(SAN).length)) {
       return
@@ -87,7 +86,7 @@ class MCPCertificate extends pki.Certificate {
     }))
   }
   
-  _setBasicConstraints(obj) {
+  setBasicConstraints (obj) {
     const basicConstr = new pki.BasicConstraints(obj)  
     this.extensions.push(new pki.Extension({
       extnID: "2.5.29.19",
@@ -96,7 +95,7 @@ class MCPCertificate extends pki.Certificate {
       parsedValue: basicConstr
   }))}
   
-  _setKeyUsage(keyUses = ['digitalSignature', 'anyKeyUsage']) {
+  setKeyUsage (keyUses = ['digitalSignature', 'anyKeyUsage']) {
     const bitArray = new ArrayBuffer(1)
     const bitView = new Uint8Array(bitArray)
   
@@ -132,7 +131,7 @@ class MCPCertificate extends pki.Certificate {
     }
   }
   
-  async _setSubjectKeyIdentifier() {
+  async setSubjectKeyIdentifier () {
     const keyBytes = this.subjectPublicKeyInfo.subjectPublicKey.valueBlock.valueHex // ArrayBuffer created by ASN1 conversion of the public key
     const sha1 = await crypto.digest('SHA-1', keyBytes)
     const ski = new asn1.OctetString({valueHex: sha1})
@@ -144,7 +143,7 @@ class MCPCertificate extends pki.Certificate {
     }))
   }
   
-  async _setAuthorityKeyIdentifier(issuer) {
+  async setAuthorityKeyIdentifier (issuer) {
     const publicKeyInfo = new pki.PublicKeyInfo({json: issuer.public})
     const keyBytes = publicKeyInfo.subjectPublicKey.valueBlock.valueHex
     const sha1 = await crypto.digest('SHA-1', keyBytes)
@@ -158,7 +157,7 @@ class MCPCertificate extends pki.Certificate {
     }))
   }
   
-  _setCRLDistributionPoints(urls) {
+  setCRLDistributionPoints (urls) {
     const distributionPoints = urls.map(uri => new pki.DistributionPoint({ distributionPoint: [new pki.GeneralName( {type: 6, value: uri} )] }))
     const crlDistributionPoints = new pki.CRLDistributionPoints({ distributionPoints })
   
@@ -170,7 +169,7 @@ class MCPCertificate extends pki.Certificate {
     }))
   }
   
-  _setOCSP(ocspUrl) {
+  setOCSP(ocspUrl) {
     const ocsp = new pki.AccessDescription({
       accessMethod: oid.ocsp,
       accessLocation: new pki.GeneralName({ type: 6, value: ocspUrl})
@@ -184,42 +183,15 @@ class MCPCertificate extends pki.Certificate {
       extnValue: infoAccess.toSchema().toBER(false),
       parsedValue: infoAccess
     }))
+
   }
 
-
-  static async issue ( subject, issuer, days = 731, algorithm = "SHA-384" ) {
-    try {
-      const cert = new MCPCertificate(subject)
-      cert._setIssuer(issuer.DN)
-      cert.notBefore.value = new Date()
-      cert.notAfter.value = dayjs().add(days, 'days').toDate()
-      cert.subjectPublicKeyInfo.fromJSON(subject.public)
-      await cert._setSubjectKeyIdentifier()
-      await cert._setAuthorityKeyIdentifier(issuer)
-      
-      cert._setKeyUsage(subject.keyUsage)
-      if (subject.basicConstraints) {
-        cert._setBasicConstraints(subject.basicConstraints)
-      }
-      if (issuer.crl) {
-        cert._setCRLDistributionPoints([issuer.crl])
-      }
-      if (issuer.ocsp) {
-        cert._setOCSP(issuer.ocsp)
-      }
-
-      await cert.sign(issuer.private, algorithm)
-
-      let certificateBuffer = await cert.toSchema(true).toBER(false)
-      certificateBuffer = Buffer.from(certificateBuffer).toString('base64')
-      subject.pem = `-----BEGIN CERTIFICATE-----\r\n${certificateBuffer.replace(/(.{64})(?!$)/g, '$1\r\n')}\r\n-----END CERTIFICATE-----\r`
-
-      return
-    } catch (err) {
-      console.log(err)
-      throw err
-    }
+  async fingerprint (hashAlgorithm = 'SHA-1') {
+    let certificateBuffer = await this.toSchema(true).toBER(false) //TODO: should be DER encoding
+    const hashBytes = await crypto.digest(hashAlgorithm, certificateBuffer)
+    return Buffer.from(hashBytes).toString('hex')
   }
+
 }
 
 module.exports = { crypto, MCPCertificate }
