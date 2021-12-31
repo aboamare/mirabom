@@ -157,9 +157,12 @@ class Organization extends Entity {
      */
     const supportedProps = ['callSign', 'country', 'domain', 'email', 'flagState', 'homePort', 'IMONumber', 'MMSI', 'name', 'organization', 'secondaryMRN', 'unit', 'URL']
     try {
-      const { payload, protectedHeader, publicKey } = await jose.flattenedVerify(jws, (protectedHeader, token) => {
+      // verify the JWT, the "certificate request" should have the public key of the entity as JWK in the protected header
+      const { payload, key } = await jose.flattenedVerify(jws, (protectedHeader, token) => {
         return jose.importJWK(protectedHeader.jwk, protectedHeader.alg)
       })
+
+      // copy only supported properties in the "certificate request" as the subject for the certificate
       const request = JSON.parse(new TextDecoder().decode(payload))
       const subject = supportedProps.reduce((obj, prop) => {
         if (!!request[prop]) {
@@ -167,13 +170,16 @@ class Organization extends Entity {
         }
         return obj
       }, {})
+      subject.public = await jose.exportJWK(key)
 
       //TODO: support requests for a new cert
 
       for (const id of this.suggestId(subject)) {
+        // try to use a nice memorable id for the subject
         const UID = this.mrnFor(id)
         const existing = await DB.entities.findOne({ UID })
         if (!existing) {
+          // now create the certificate
           const mir = new CertificateAuthority(this)
           const entity = new Entity(Object.assign(
             this._asTemplate(['email']), 
