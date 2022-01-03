@@ -42,10 +42,9 @@ class CertificateAuthority extends Object {
      */
     const types = {
       entity: obj => {
-        const mrn = obj.mrn || `${this.mrn}:${uuid()}`
         return Object.assign(
           {
-            DN: { UID: mrn },
+            DN: { UID: obj.UID || `${this.UID}:${uuid()}` },
             SAN: this._SAN(obj),
             keyUsage: ['digitalSignature', 'anyKeyUsage', 'clientAuth'],
             crl: obj.crl || this.crl,
@@ -57,7 +56,7 @@ class CertificateAuthority extends Object {
       mir: obj => {
         return Object.assign(
           {
-            DN: { UID: obj.UID || `urn:mrn:mcp:id:${obj.ipid || obj.organization}`},
+            DN: { UID: obj.UID || `urn:mrn:mcp:id:${obj.ipid || obj.organization}` },
             SAN: this._SAN({
               name: obj.name || obj.id,
               organization: obj.organization || obj.ipid,
@@ -119,11 +118,11 @@ class CertificateAuthority extends Object {
     this.public = keyPair.public
     // ensure that the private key is ready to use for signing
     this.private = await crypto.importKey('jwk', keyPair.private, {name: 'ECDSA', namedCurve: keyPair.private.crv}, keyPair.private.ext, keyPair.private.key_ops)
-    this.fingerprint = keyPair.id
+    this.fingerprint = keyPair._id
   }
 
   async _getKey (fingerprint) {
-    return DB.keys.findOne({id: fingerprint || this.certificates[0]})
+    return DB.keys.findOne({_id: fingerprint || this.certificates[0]})
   }
 
   async _createCertificate (subject, days = 731, algorithm = "SHA-384" ) {
@@ -154,10 +153,11 @@ class CertificateAuthority extends Object {
       certificateBuffer = Buffer.from(certificateBuffer).toString('base64')
 
       return {
-        id: fingerprint,
+        _id: fingerprint,
         mrn: subject.DN.UID || 'root',
         notAfter: cert.notAfter.value,
-        pem: `-----BEGIN CERTIFICATE-----\n${certificateBuffer.replace(/(.{64})(?!$)/g, '$1\n')}\n-----END CERTIFICATE-----\n`
+        pem: `-----BEGIN CERTIFICATE-----\n${certificateBuffer.replace(/(.{64})(?!$)/g, '$1\n')}\n-----END CERTIFICATE-----\n`,
+        serial: cert.serial
       }
     } catch (err) {
       console.log(err)
@@ -169,7 +169,7 @@ class CertificateAuthority extends Object {
     let next = fingerprint
     let chain = []
     while (next) {
-      const cert = await DB.certificates.findOne({ id: next })
+      const cert = await DB.certificates.findOne({ _id: next })
       if (cert) {
         chain.push(cert)
         next = cert.parent
@@ -205,7 +205,7 @@ class CertificateAuthority extends Object {
     // if a new keypair was created for the entity save it
     if (subject.private) {
       await DB.keys.insert({
-        id: cert.id,
+        _id: cert._id,
         private: subject.private,
         public: subject.public
       })
@@ -216,7 +216,7 @@ class CertificateAuthority extends Object {
     if (! Array.isArray(entity.certificates)) {
       entity.certificates = []
     }
-    entity.certificates.unshift(cert.id)
+    entity.certificates.unshift(cert._id)
     entity.certificateExpires = cert.notAfter
   }
 
@@ -242,12 +242,12 @@ class CertificateAuthority extends Object {
     root.public = rootKey.public
     rootCA.DN = root.DN // create a self-signed cert
     const rootCert = await rootCA._createCertificate(root, 10 * 365 + 2)
-    rootKey.id = rootCert.id
+    rootKey._id = rootCert._id
     await DB.certificates.insert(rootCert)
     await DB.keys.insert(rootKey)
 
     await rootCA.issueCertificate(mir, 'mir', 5 * 365 + 1)
-    mir.root = rootCert.id
+    mir.root = rootCert._id
     return mir
   }
 }

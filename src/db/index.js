@@ -2,9 +2,9 @@ const Loki = require('./loki')
 const Ne = require('./ne')
 
 const Collections = [
-  { name: 'keys', unique: 'id', clone: true, cloneMethod: 'shallow' },
-  { name: 'certificates', unique: 'id' },
-  { name: 'entities', unique: 'UID'}
+  { name: 'keys', unique: '_id', clone: true, cloneMethod: 'shallow' },   // '_id' index needed for Loki, Ne/Mongo always have that
+  { name: 'certificates', unique: 'serial' },
+  { name: 'entities', unique: '_id'}                                      // '_id' index needed for Loki, Ne/Mongo always have that
 ]
 
 module.exports = function (cb) {

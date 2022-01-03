@@ -27,22 +27,25 @@ function MRN (id) {
 class Entity extends Object {
   constructor (props) {
     super()
+    if (props._id) {
+      props.UID = props._id
+      delete props._id
+    }
     Object.assign(this, props)
   }
 
   async save () {
-    const dontSave = ['public', 'private'].reduce((obj, prop) => {
-      if (this[prop]) {
-        obj[prop] = this[prop]
-        delete this[prop]
+    const dbObj = Object.assign({}, this, {_id: this._id})
+    const dontSave = ['UID', 'public', 'private']
+    dontSave.forEach(prop => {
+      if (dbObj[prop] !== undefined) {
+        delete dbObj[prop]
       }
-      return obj
-    }, {})
-    await DB.entities.upsert(this)
-    Object.assign(this, dontSave)
+    })
+    await DB.entities.upsert(dbObj)
   }
 
-  get id () {
+  get _id () {
     return this.UID
   }
 
@@ -177,7 +180,7 @@ class Organization extends Entity {
       for (const id of this.suggestId(subject)) {
         // try to use a nice memorable id for the subject
         const UID = this.mrnFor(id)
-        const existing = await DB.entities.findOne({ UID })
+        const existing = await DB.entities.findOne({ _id: UID })
         if (!existing) {
           // now create the certificate
           const mir = new CertificateAuthority(this)

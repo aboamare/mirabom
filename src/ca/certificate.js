@@ -9,7 +9,6 @@ pki.setEngine("node", webcrypto, crypto)
 class MCPCertificate extends pki.Certificate {
   constructor (subject) {
     super()
-    this.id = subject.id
     this.version = 2 // the version is 0 indexed. TODO: adjust the version based upon presence of extensions and key identifiers
     this.serialNumber = new asn1.Integer({ value: Date.now() })
     this.extensions = []
@@ -192,6 +191,9 @@ class MCPCertificate extends pki.Certificate {
     return Buffer.from(hashBytes).toString('hex')
   }
 
+  get serial () {
+    return this.serialNumber.valueBlock.toJSON().valueDec
+  }
 }
 
 module.exports = { crypto, MCPCertificate }
