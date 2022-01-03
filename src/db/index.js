@@ -1,4 +1,5 @@
 const Loki = require('./loki')
+const Ne = require('./ne')
 
 const Collections = [
   { name: 'keys', unique: 'id', clone: true, cloneMethod: 'shallow' },
@@ -9,12 +10,12 @@ const Collections = [
 module.exports = function (cb) {
   const options = {
     onReady: async (db) => {
-      await Promise.all(Collections.map(coll => db.ensureCollection(coll)))
-      console.log('collections created')
+      await Promise.all(Collections.map(coll => db.ensureCollection(coll.name, coll)))
+      console.info('collections created')
       if (typeof cb == 'function') {
         cb(db)
       }
     }
   }
-  return Loki(options)
+  return Ne(options)
 }

@@ -15,10 +15,10 @@ function open (name, options = {}) {
 
   process.on('beforeExit', () => db.close())
 
-  db.ensureCollection = async (options = {}) => {
-    let collection = db.getCollection(options.name)
+  db.ensureCollection = async (name, options = {}) => {
+    let collection = db.getCollection(name)
     if (collection === null) {
-      collection = db.addCollection(options.name, options)
+      collection = db.addCollection(name, options)
     }
     return collection
   }

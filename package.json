@@ -16,6 +16,7 @@
     "handlebars": "^4.7.7",
     "jose": "^4.3.7",
     "lokijs": "^1.5.12",
+    "nedb-2": "github:lokkilok/nedb",
     "pkijs": "^2.2.1",
     "uuid": "^8.3.2"
   },
