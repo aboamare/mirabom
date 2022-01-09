@@ -305,6 +305,41 @@ const routes = [
         return Boom.badRequest()
       }
     }
+  },
+  {
+    /*
+     * Return an OCSP response, with the status of the requested certificates
+     *
+     */
+    path: '/{ipid}/ocsp',
+    method: 'POST',
+    options: {
+      payload: {
+//        allow: ['application/ocsp-request'],
+        output: 'data', // to indicate that the handler wants a buffer with the raw body as payload
+        parse: false
+      }
+    },
+    handler: async function (req, h) {
+      const ip = await Organization.get(req.params.ipid)
+      if (!ip) {
+        throw Boom.notFound()
+      }
+      try {
+        const mir = new CertificateAuthority(ip)
+
+        // copy the raw, binary, data into an new ArrayBuffer
+        const buf = req.payload
+        console.debug(req.payload.toString('hex'))
+        const arrayBuf = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+
+        const ocspResponse = await mir.responseForOCSPRequest(arrayBuf)
+        return h.response(ocspResponse).type('application/ocsp-response')
+      } catch (err) {
+        console.warn(err)
+        return Boom.badRequest()
+      }
+    }
   }
 ]
 

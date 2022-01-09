@@ -2,6 +2,7 @@ const dayjs = require('dayjs')
 const uuid = require('uuid').v4
 
 const { crypto, MCPCertificate } = require('./certificate')
+const { OCSPRequest, OCSPResponse } = require('./ocsp')
 const DB = require('../db')()
 
 class CertificateAuthority extends Object {
@@ -125,6 +126,18 @@ class CertificateAuthority extends Object {
     return DB.keys.findOne({_id: fingerprint || this.certificates[0]})
   }
 
+  async _loadPrivateKey () {
+    const keyPair = await this._getKey()
+    await this._useKey(keyPair)
+    this.algorithm = "SHA-384"
+  }
+
+  async _loadOwnPEM () {
+    const cert = await DB.certificates.findOne({ _id: this.certificates[0] })
+    this.pem = cert.pem, 
+    this.fingerprint = cert._id
+  }
+
   async _createCertificate (subject, days = 731, algorithm = "SHA-384" ) {
     try {
       const cert = new MCPCertificate(subject)
@@ -218,6 +231,19 @@ class CertificateAuthority extends Object {
     }
     entity.certificates.unshift(cert._id)
     entity.certificateExpires = cert.notAfter
+  }
+
+  async responseForOCSPRequest (buffer) {
+    const req = new OCSPRequest(buffer, this.UID)
+    const reqCerts = new Map(req.serials.map(s => [s, undefined]))
+    const foundCerts = await DB.certificates.find({ serial: {$in: [...reqCerts.keys()]} }, { serial: 1, status: 1, _id: 0})
+    const statuses = (foundCerts || []).reduce((obj, cert) => {
+      obj[cert.serial] = cert.status || 'good'
+    }, {})
+    await this._loadOwnPEM()
+    const resp = OCSPResponse.to(req, this, statuses)
+    await this._loadPrivateKey()
+    return await resp.toDER()
   }
 
   static async initialize (config) {

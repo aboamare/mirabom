@@ -7,13 +7,24 @@ const crypto = new pki.CryptoEngine({name: "node", crypto: webcrypto, subtle: we
 pki.setEngine("node", webcrypto, crypto)
 
 class MCPCertificate extends pki.Certificate {
-  constructor (subject) {
-    super()
-    this.version = 2 // the version is 0 indexed. TODO: adjust the version based upon presence of extensions and key identifiers
-    this.serialNumber = new asn1.Integer({ value: Date.now() })
-    this.extensions = []
-    this._setDN(subject.DN)
-    this._setSubjectAltNames(subject)
+  constructor (subjectOrPEM) {
+    if (typeof subjectOrPEM === 'string') {
+      let b64 = subjectOrPEM.replace(/^\s?-----BEGIN CERTIFICATE-----/, '')
+      b64 = b64.replace(/-----END CERTIFICATE-----/, '')
+      b64 = b64.replace(/\s+/g, '')
+      const buf = Buffer.from(b64, 'base64')
+      const asn = asn1.fromBER(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength))
+      super({schema: asn.result})  
+    } else if (typeof subjectOrPEM === 'object' && subjectOrPEM.DN) {
+      super()
+      this.version = 2 // the version is 0 indexed. TODO: adjust the version based upon presence of extensions and key identifiers
+      this.serialNumber = new asn1.Integer({ value: Date.now() })
+      this.extensions = []
+      this._setDN(subjectOrPEM.DN)
+      this._setSubjectAltNames(subjectOrPEM)  
+    } else {
+      throw TypeError('MCP Certificate can only created from PEM string or object with a DN property.')
+    }
   }
 
   _addTypesAndValues (typesAndValues, obj) {
@@ -192,7 +203,17 @@ class MCPCertificate extends pki.Certificate {
   }
 
   get serial () {
-    return this.serialNumber.valueBlock.toJSON().valueDec
+    return Buffer.from(this.serialNumber.valueBlock.valueHex).toString('hex')
+  }
+
+  static fromPEM (pem) {
+    return new this(pem)
+  }
+
+  static nameAsDER (uidOrObj) {
+    const subject = typeof uidOrObj === 'string' ? {DN: {UID: uidOrObj}} : {DN: uidOrObj}
+    const cert = new this(subject)
+    return cert.subject.toSchema().toBER()
   }
 }
 
