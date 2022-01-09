@@ -10,9 +10,15 @@ const hashAlgorithms = {
   '2.16.840.1.101.3.4.2.1': 'sha256'
 }
 
-const extensions = {
-  '1.3.6.1.5.5.7.48.1.2': 'nonce'
-}
+const extensions = [
+  ['1.3.6.1.5.5.7.48.1.2', 'nonce']
+]
+
+const ExtensionIDs = extensions.reduce((map, [id, name]) => {
+  map.set(id, name)
+  map.set(name, id)
+  return map
+}, new Map())
 
 class OCSPRequest extends pki.OCSPRequest {
   constructor (der, issuerUid) {
@@ -43,8 +49,9 @@ class OCSPRequest extends pki.OCSPRequest {
     })
 
     this.tbsRequest.requestExtensions.forEach(extn => {
-      if (extensions[extn.extnID]) {
-        this[extensions[extn.extnID]] = extn.extnValue
+      const extnName = ExtensionIDs.get(extn.extnID)
+      if (extnName) {
+        this[extnName] = extn.extnValue
       }
     })
   }
@@ -81,6 +88,20 @@ class OCSPResponse extends pki.OCSPResponse {
 		ocspBasicResp.tbsResponseData.producedAt = new Date()
     ocspBasicResp.certs = [cert]
     this._basicResp = ocspBasicResp
+  }
+
+  set nonce (hexString) {
+    const responseData = this._basicResp.tbsResponseData
+    if (!responseData.responseExtensions) {
+      responseData.responseExtensions = []
+    }
+    const buf = Buffer.from(hexString, 'hex')
+    responseData.responseExtensions.push(new pki.Extension({
+      extnID: ExtensionIDs.get('nonce'),
+      critical: false,
+      extnValue: (new asn1.OctetString({ valueHex: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) })).toBER(false),
+      parsedValue: hexString
+    }))
   }
 
   _addCertStatus (certId, status = 'good') {
@@ -142,7 +163,10 @@ class OCSPResponse extends pki.OCSPResponse {
 
   static to (req, ca, statuses = {}, result = 'success') {
     const resp = new this(ca, result)
-    //TODO: check for a nonce
+    if (req.nonce) {
+      //TODO: check for replay ?
+      resp.nonce = req.nonce
+    }
     req.certIds.forEach(certId => {
       const serial = Buffer.from(certId.serialNumber.valueBlock.valueHex).toString('hex')
       resp._addCertStatus(certId, statuses[serial])
