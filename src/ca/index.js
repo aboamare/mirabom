@@ -239,6 +239,7 @@ class CertificateAuthority extends Object {
     const foundCerts = await DB.certificates.find({ serial: {$in: [...reqCerts.keys()]} }, { serial: 1, status: 1, _id: 0})
     const statuses = (foundCerts || []).reduce((obj, cert) => {
       obj[cert.serial] = cert.status || 'good'
+      return obj
     }, {})
     await this._loadOwnPEM()
     const resp = OCSPResponse.to(req, this, statuses)

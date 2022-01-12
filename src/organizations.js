@@ -50,7 +50,7 @@ class Entity extends Object {
   }
 
   get mrn () {
-    return MRN(this.id)
+    return MRN(this._id)
   }
 
   get x5u () {

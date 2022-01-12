@@ -66,6 +66,7 @@ class OCSPRequest extends pki.OCSPRequest {
 
   set nonce (octectString) {
     this._nonce = Buffer.from(octectString.valueBlock.valueHex).toString('hex')
+    console.log(`OCSP request with nonce ${this._nonce}`)
     return this._nonce
   }
 
@@ -99,7 +100,7 @@ class OCSPResponse extends pki.OCSPResponse {
     responseData.responseExtensions.push(new pki.Extension({
       extnID: ExtensionIDs.get('nonce'),
       critical: false,
-      extnValue: (new asn1.OctetString({ valueHex: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) })).toBER(false),
+      extnValue: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
       parsedValue: hexString
     }))
   }

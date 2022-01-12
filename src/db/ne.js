@@ -24,7 +24,7 @@ class Collection extends Object {
 
   async find (query, projection) {
     return new Promise((resolve, reject) => {
-      return this._store.findOne(query, projection, (err, docs) => {
+      return this._store.find(query, projection, (err, docs) => {
         if (err) {
           reject(err)
         } else {
