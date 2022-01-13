@@ -179,21 +179,35 @@ class MCPCertificate extends pki.Certificate {
     }))
   }
   
-  setOCSP(ocspUrl) {
-    const ocsp = new pki.AccessDescription({
-      accessMethod: oid.ocsp,
-      accessLocation: new pki.GeneralName({ type: 6, value: ocspUrl})
-    })
-  
-    const infoAccess = new pki.InfoAccess({ accessDescriptions: [ocsp]})
-  
-    this.extensions.push(new pki.Extension({
-      extnID: oid.authorityInfoAccess,
-      critical: false,
-      extnValue: infoAccess.toSchema().toBER(false),
-      parsedValue: infoAccess
-    }))
+  setInfoAccess(ocspUrl, x5u) {
+    const accessDescriptions = []
 
+    if (ocspUrl && new URL(ocspUrl)) {
+      accessDescriptions.push(new pki.AccessDescription({
+        accessMethod: oid.ocsp,
+        accessLocation: new pki.GeneralName({ type: 6, value: ocspUrl})
+      }))
+    }
+
+    if (x5u) {
+      const x5uUrl = typeof x5u === 'function' ? x5u(this) : new URL(x5u).toString()
+      accessDescriptions.push(new pki.AccessDescription({
+        accessMethod: oid.x5u,
+        accessLocation: new pki.GeneralName({ type: 6, value: x5uUrl})
+      }))
+    }
+  
+    if (accessDescriptions.length > 0) {
+
+      const infoAccess = new pki.InfoAccess({ accessDescriptions })
+    
+      this.extensions.push(new pki.Extension({
+        extnID: oid.authorityInfoAccess,
+        critical: false,
+        extnValue: infoAccess.toSchema().toBER(false),
+        parsedValue: infoAccess
+      }))
+    }
   }
 
   async fingerprint (hashAlgorithm = 'SHA-1') {

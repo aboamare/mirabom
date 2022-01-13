@@ -53,12 +53,6 @@ class Entity extends Object {
     return MRN(this._id)
   }
 
-  get x5u () {
-    if (this.mir && Array.isArray(this.certificates) && this.certificates.length > 0) {
-      return `https://${Config.domain}/${this.mir}/certificates/${this.certificates[0]}.x5u`
-    }
-    return undefined
-  }
 }
 
 class Organization extends Entity {
@@ -281,11 +275,11 @@ const routes = [
   },
   {
     /*
-     * Return a text document with the certificate chain, starting with the cert that has the given fingerprint.
+     * Return a text document with the certificate chain, starting with the cert that has the given serial (in hex).
      *
      * The response contains the certificates in PEM format.
      */
-    path: '/{ipid}/certificates/{fingerprint}.x5u',
+    path: '/{ipid}/certificates/{serial}.x5u',
     method: 'GET',
     handler: async function (req, h) {
       const ip = await Organization.get(req.params.ipid)
@@ -294,10 +288,10 @@ const routes = [
       }
       try {
         const mir = new CertificateAuthority(ip)
-        const chain = await mir.getCertificateChain(req.params.fingerprint)
+        const chain = await mir.getCertificateChain(req.params.serial)
         if (Array.isArray(chain) && chain.length > 0) {
           return h.response(chain.map(cert => cert.pem).join(''))
-            .type('text/plain')
+            .type('application/pem-certificate-chain')
         }        
         return Boom.notFound()
       } catch (err) {

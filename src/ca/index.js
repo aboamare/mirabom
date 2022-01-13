@@ -49,7 +49,8 @@ class CertificateAuthority extends Object {
             SAN: this._SAN(obj),
             keyUsage: ['digitalSignature', 'anyKeyUsage', 'clientAuth'],
             crl: obj.crl || this.crl,
-            ocsp: obj.ocsp || this.ocsp
+            ocsp: obj.ocsp || this.ocsp,
+            x5u: cert => `https://${this.domain}/${this.ipid}/certificates/${cert.serial}.x5u`
           }, 
           obj
         )
@@ -69,7 +70,8 @@ class CertificateAuthority extends Object {
             basicConstraints: {cA: true, pathLenConstraint: 4},
             keyUsage: ['digitalSignature', 'keyCertSign', 'clientAuth'],
             crl: obj.crl || `https://${obj.domain}/${obj.ipid}/crl`,
-            ocsp: obj.ocsp || `https://${obj.domain}/${obj.ipid}/ocsp`
+            ocsp: obj.ocsp || `https://${obj.domain}/${obj.ipid}/ocsp`,
+            x5u: cert => `https://${obj.domain}/${obj.ipid}/certificates/${cert.serial}.x5u`
           },
           obj
         )
@@ -155,9 +157,14 @@ class CertificateAuthority extends Object {
       if (subject.crl) {
         cert.setCRLDistributionPoints([subject.crl])
       }
-      if (subject.ocsp) {
-        cert.setOCSP(subject.ocsp)
+      cert.setInfoAccess(subject.ocsp, subject.x5u)
+      if (typeof subject.x5u === 'function') {
+        subject.x5u = subject.x5u(cert)
       }
+      //TODO: add references to certificate policy statements
+
+      //TODO: add "x5u" 
+      //TODO: add "attestations url"
 
       await cert.sign(this.private, algorithm)
 
@@ -178,9 +185,10 @@ class CertificateAuthority extends Object {
     }
   }
 
-  async getCertificateChain (fingerprint) {
-    let next = fingerprint
-    let chain = []
+  async getCertificateChain (serial) {
+    const top = await DB.certificates.findOne({ serial, mrn: new RegExp(`^${this.UID}:.+`)})
+    const chain = top ? [top] : []
+    let next = top ? top.parent : null
     while (next) {
       const cert = await DB.certificates.findOne({ _id: next })
       if (cert) {
@@ -226,6 +234,9 @@ class CertificateAuthority extends Object {
 
     // update the entity with the new DN (i.e. mrn), cert, etc.
     Object.assign (entity, subject.DN)
+    if (subject.x5u) {
+      entity.x5u = subject.x5u
+    }
     if (! Array.isArray(entity.certificates)) {
       entity.certificates = []
     }

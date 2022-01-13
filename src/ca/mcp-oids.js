@@ -1,3 +1,10 @@
+if (require.main === module) {
+  // generate a new UUID based OID
+  const uuid = require('uuid')
+  const bigInt = BigInt(`0x${uuid.v4().replaceAll('-', '')}`)
+  console.log(`2.25.${bigInt.toString()}`)
+}
+
 module.exports = {
   /*
    * standard OIDs needed in MCP certificates
@@ -43,5 +50,6 @@ module.exports = {
   shipType:     '2.25.107857171638679641902842130101018412315',
   homePort:     '2.25.285632790821948647314354670918887798603',
   secondaryMRN: '2.25.268095117363717005222833833642941669792',
-  URL:          '2.25.245076023612240385163414144226581328607'
+  URL:          '2.25.245076023612240385163414144226581328607',
+  x5u:          '2.25.225758541249626787560521749862278982872'
 }
