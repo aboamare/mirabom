@@ -1,8 +1,8 @@
 'use strict'
 
-const Hapi = require('@hapi/hapi')
+import Hapi from '@hapi/hapi'
 
-const organizations = require('./organizations').routes
+import {routes as  organizations} from './organizations.js'
 
 const server = Hapi.server({
   port: parseInt(process.env['HTTP_PORT'] || '3001'),
@@ -12,12 +12,12 @@ const server = Hapi.server({
 server.route(organizations)
 
 
-exports.initialize = async () => {
+export async function initialize () {
   await server.initialize()
   return server 
 }
 
-exports.start = async () => {
+export async function start () {
   await server.start()
   console.log('Server running on %s', server.info.uri)
   return server

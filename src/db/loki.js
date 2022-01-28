@@ -1,4 +1,4 @@
-const Loki = require('lokijs')
+import Loki from 'lokijs'
 
 function open (name, options = {}) {
   let db
@@ -45,7 +45,7 @@ function proxify (lokiDb) {
 }
 
 let LokiDB
-module.exports = function (options) {
+export default function (options) {
   /*
    * Return a new Proxy on the singleton Loki DB
    */

@@ -1,20 +1,15 @@
-const webcrypto = require('crypto').webcrypto
-const asn1 = require('asn1js')
-const pki = require('pkijs')
-const oid = require('./mcp-oids')
+import asn1  from 'asn1js'
+import pki  from 'pkijs'
+import { MCPCertificate as pkiCertificate, OID }  from 'mirau'
 
-const crypto = new pki.CryptoEngine({name: "node", crypto: webcrypto, subtle: webcrypto.subtle})
-pki.setEngine("node", webcrypto, crypto)
+export function getCrypto () {
+  return pki.getEngine().subtle
+}
 
-class MCPCertificate extends pki.Certificate {
+export class MCPCertificate extends pkiCertificate {
   constructor (subjectOrPEM) {
     if (typeof subjectOrPEM === 'string') {
-      let b64 = subjectOrPEM.replace(/^\s?-----BEGIN CERTIFICATE-----/, '')
-      b64 = b64.replace(/-----END CERTIFICATE-----/, '')
-      b64 = b64.replace(/\s+/g, '')
-      const buf = Buffer.from(b64, 'base64')
-      const asn = asn1.fromBER(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength))
-      super({schema: asn.result})  
+      super(subjectOrPEM)  
     } else if (typeof subjectOrPEM === 'object' && subjectOrPEM.DN) {
       super()
       this.version = 2 // the version is 0 indexed. TODO: adjust the version based upon presence of extensions and key identifiers
@@ -34,7 +29,7 @@ class MCPCertificate extends pki.Certificate {
       if (Number.isInteger(value)) {
         asn1Type = asn1.Integer
       }
-      return new pki.AttributeTypeAndValue({type: oid[attr], value: new asn1Type({ value })})
+      return new pki.AttributeTypeAndValue({type: OID[attr], value: new asn1Type({ value })})
     }))  
   }
   
@@ -76,7 +71,7 @@ class MCPCertificate extends pki.Certificate {
   
     const altNames = new asn1.Sequence({
       value: sanProperties.reduce((names, attr) => {
-        const type = oid[attr]
+        const type = OID[attr]
         let values = SAN[attr]
         if (! Array.isArray(values)) {
           values = [values]
@@ -128,7 +123,7 @@ class MCPCertificate extends pki.Certificate {
       })
     )
   
-    const keyPurposes = keyUses.map(usage => oid[usage]).filter(use => !!use)
+    const keyPurposes = keyUses.map(usage => OID[usage]).filter(use => !!use)
     if (keyPurposes && keyPurposes.length) {
       const extKeyUsage = new pki.ExtKeyUsage({ keyPurposes })
       this.extensions.push(new pki.Extension({
@@ -142,11 +137,12 @@ class MCPCertificate extends pki.Certificate {
   }
   
   async setSubjectKeyIdentifier () {
+    const crypto = getCrypto()
     const keyBytes = this.subjectPublicKeyInfo.subjectPublicKey.valueBlock.valueHex // ArrayBuffer created by ASN1 conversion of the public key
     const sha1 = await crypto.digest('SHA-1', keyBytes)
     const ski = new asn1.OctetString({valueHex: sha1})
     this.extensions.push(new pki.Extension({
-      extnID: oid.subjectKeyIdentifier,
+      extnID: OID.subjectKeyIdentifier,
       critical: false,
       extnValue: ski.toBER(false),
       parsedValue: ski
@@ -154,13 +150,14 @@ class MCPCertificate extends pki.Certificate {
   }
   
   async setAuthorityKeyIdentifier (issuer) {
+    const crypto = getCrypto()
     const publicKeyInfo = new pki.PublicKeyInfo({json: issuer.public})
     const keyBytes = publicKeyInfo.subjectPublicKey.valueBlock.valueHex
     const sha1 = await crypto.digest('SHA-1', keyBytes)
     const keyIdentifier = new asn1.OctetString({valueHex: sha1})
     const authorityKeyIdentifier = new pki.AuthorityKeyIdentifier({ keyIdentifier })
     this.extensions.push(new pki.Extension({
-      extnID: oid.authorityKeyIdentifier,
+      extnID: OID.authorityKeyIdentifier,
       critical: false,
       extnValue: authorityKeyIdentifier.toSchema().toBER(false),
       parsedValue: authorityKeyIdentifier
@@ -172,19 +169,19 @@ class MCPCertificate extends pki.Certificate {
     const crlDistributionPoints = new pki.CRLDistributionPoints({ distributionPoints })
   
     this.extensions.push(new pki.Extension({
-      extnID: oid.crlDistributionPoints,
+      extnID: OID.crlDistributionPoints,
       critical: false,
       extnValue: crlDistributionPoints.toSchema().toBER(false),
       parsedValue: crlDistributionPoints
     }))
   }
   
-  setInfoAccess(ocspUrl, x5u) {
+  setAuthorityInfoAccess (ocspUrl, x5u) {
     const accessDescriptions = []
 
     if (ocspUrl && new URL(ocspUrl)) {
       accessDescriptions.push(new pki.AccessDescription({
-        accessMethod: oid.ocsp,
+        accessMethod: OID.ocsp,
         accessLocation: new pki.GeneralName({ type: 6, value: ocspUrl})
       }))
     }
@@ -192,7 +189,7 @@ class MCPCertificate extends pki.Certificate {
     if (x5u) {
       const x5uUrl = typeof x5u === 'function' ? x5u(this) : new URL(x5u).toString()
       accessDescriptions.push(new pki.AccessDescription({
-        accessMethod: oid.x5u,
+        accessMethod: OID.x5u,
         accessLocation: new pki.GeneralName({ type: 6, value: x5uUrl})
       }))
     }
@@ -202,7 +199,7 @@ class MCPCertificate extends pki.Certificate {
       const infoAccess = new pki.InfoAccess({ accessDescriptions })
     
       this.extensions.push(new pki.Extension({
-        extnID: oid.authorityInfoAccess,
+        extnID: OID.authorityInfoAccess,
         critical: false,
         extnValue: infoAccess.toSchema().toBER(false),
         parsedValue: infoAccess
@@ -210,25 +207,34 @@ class MCPCertificate extends pki.Certificate {
     }
   }
 
-  async fingerprint (hashAlgorithm = 'SHA-1') {
-    let certificateBuffer = await this.toSchema(true).toBER(false) //TODO: should be DER encoding
-    const hashBytes = await crypto.digest(hashAlgorithm, certificateBuffer)
-    return Buffer.from(hashBytes).toString('hex')
-  }
+  setSubjectInfoAccess (matpUrl) {
+    const accessDescriptions = []
 
-  get serial () {
-    return Buffer.from(this.serialNumber.valueBlock.valueHex).toString('hex')
-  }
+    if (matpUrl && new URL(matpUrl)) {
+      accessDescriptions.push(new pki.AccessDescription({
+        accessMethod: OID.matp,
+        accessLocation: new pki.GeneralName({ type: 6, value: matpUrl})
+      }))
+    }
 
-  static fromPEM (pem) {
-    return new this(pem)
+    if (accessDescriptions.length > 0) {
+
+      const infoAccess = new pki.InfoAccess({ accessDescriptions })
+    
+      this.extensions.push(new pki.Extension({
+        extnID: OID.subjectInfoAccess,
+        critical: false,
+        extnValue: infoAccess.toSchema().toBER(false),
+        parsedValue: infoAccess
+      }))
+    }
+
   }
 
   static nameAsDER (uidOrObj) {
-    const subject = typeof uidOrObj === 'string' ? {DN: {UID: uidOrObj}} : {DN: uidOrObj}
+    const subject = typeof uidOrObj === 'string' ? {DN: {uid: uidOrObj}} : {DN: uidOrObj}
     const cert = new this(subject)
     return cert.subject.toSchema().toBER()
   }
-}
 
-module.exports = { crypto, MCPCertificate }
+}

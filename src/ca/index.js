@@ -1,11 +1,14 @@
-const dayjs = require('dayjs')
-const uuid = require('uuid').v4
+import dayjs from 'dayjs'
+import { v4 as uuid } from 'uuid'
 
-const { crypto, MCPCertificate } = require('./certificate')
-const { OCSPRequest, OCSPResponse } = require('./ocsp')
-const DB = require('../db')()
+import { getCrypto, MCPCertificate } from './certificate.js'
+import  { MCPEntity } from 'mirau'
+import { OCSPRequest, OCSPResponse } from './ocsp.js'
 
-class CertificateAuthority extends Object {
+import db from'../db/index.js'
+const DB = db()
+
+export class CertificateAuthority extends Object {
   constructor (organization) {
     super()
     Object.assign(this, organization)
@@ -20,14 +23,14 @@ class CertificateAuthority extends Object {
   }
 
   get DN () {
-    return this._dn || { UID: this.UID }
+    return this._dn || { uid: this.uid }
   }
 
   set DN (obj) {
     this._dn = obj
   }
 
-  _SAN (entity, fields = ['commonName', 'organization', 'country', 'emailAddress', 'flagState', 'callSign', 'IMONumber', 'MMSI', 'shipType', 'homePort', 'secondaryMRN', 'URL']) {
+  _SAN (entity, fields = [...MCPEntity.RecognizedProperties]) {
     return fields.reduce((san, field) => {
       const value = entity[field]
       if (!!value) {
@@ -45,7 +48,7 @@ class CertificateAuthority extends Object {
       entity: obj => {
         return Object.assign(
           {
-            DN: { UID: obj.UID || `${this.UID}:${uuid()}` },
+            DN: { uid: obj.uid || `${this.uid}:${uuid()}` },
             SAN: this._SAN(obj),
             keyUsage: ['digitalSignature', 'anyKeyUsage', 'clientAuth'],
             crl: obj.crl || this.crl,
@@ -58,20 +61,21 @@ class CertificateAuthority extends Object {
       mir: obj => {
         return Object.assign(
           {
-            DN: { UID: obj.UID || `urn:mrn:mcp:id:${obj.ipid || obj.organization}` },
+            DN: { uid: obj.uid || `urn:mrn:mcp:id:${obj.ipid || obj.organization}` },
             SAN: this._SAN({
               name: obj.name || obj.id,
               organization: obj.organization || obj.ipid,
               unit: obj.unit,
               country: obj.country,
               email: obj.email,
-              URL: obj.url
+              url: obj.url
             }),
             basicConstraints: {cA: true, pathLenConstraint: 4},
             keyUsage: ['digitalSignature', 'keyCertSign', 'clientAuth'],
             crl: obj.crl || `https://${obj.domain}/${obj.ipid}/crl`,
             ocsp: obj.ocsp || `https://${obj.domain}/${obj.ipid}/ocsp`,
-            x5u: cert => `https://${obj.domain}/${obj.ipid}/certificates/${cert.serial}.x5u`
+            x5u: cert => `https://${obj.domain}/${obj.ipid}/certificates/${cert.serial}.x5u`,
+            matp: obj.matp || `https://${obj.domain}/${obj.ipid}/matp`
           },
           obj
         )
@@ -85,7 +89,7 @@ class CertificateAuthority extends Object {
               email: obj.email
             },
             SAN: this._SAN({
-              URL: obj.url || `https://${obj.domain}`,
+              url: obj.url || `https://${obj.domain}`,
             }),
             basicConstraints: {cA: true, pathLenConstraint: 4},
             keyUsage: ['keyCertSign'],
@@ -99,6 +103,7 @@ class CertificateAuthority extends Object {
   
   async _createKey (namedCurve = 'P-384') {
     try {
+      const crypto = getCrypto()
       const keyPair = await crypto.generateKey(
         {
           name: "ECDSA",
@@ -118,6 +123,7 @@ class CertificateAuthority extends Object {
   }
 
   async _useKey (keyPair) {
+    const crypto = getCrypto()
     this.public = keyPair.public
     // ensure that the private key is ready to use for signing
     this.private = await crypto.importKey('jwk', keyPair.private, {name: 'ECDSA', namedCurve: keyPair.private.crv}, keyPair.private.ext, keyPair.private.key_ops)
@@ -157,9 +163,12 @@ class CertificateAuthority extends Object {
       if (subject.crl) {
         cert.setCRLDistributionPoints([subject.crl])
       }
-      cert.setInfoAccess(subject.ocsp, subject.x5u)
+      cert.setAuthorityInfoAccess(subject.ocsp, subject.x5u)
       if (typeof subject.x5u === 'function') {
         subject.x5u = subject.x5u(cert)
+      }
+      if (subject.matp) {
+        cert.setSubjectInfoAccess(subject.matp)
       }
       //TODO: add references to certificate policy statements
 
@@ -167,14 +176,13 @@ class CertificateAuthority extends Object {
       //TODO: add "attestations url"
 
       await cert.sign(this.private, algorithm)
-
-      const fingerprint = await cert.fingerprint()
+      await cert.updateFingerprint()
       let certificateBuffer = await cert.toSchema(true).toBER(false)
       certificateBuffer = Buffer.from(certificateBuffer).toString('base64')
 
       return {
-        _id: fingerprint,
-        mrn: subject.DN.UID || 'root',
+        _id: cert.fingerprint,
+        mrn: subject.DN.uid || 'root',
         notAfter: cert.notAfter.value,
         pem: `-----BEGIN CERTIFICATE-----\n${certificateBuffer.replace(/(.{64})(?!$)/g, '$1\n')}\n-----END CERTIFICATE-----\n`,
         serial: cert.serial
@@ -186,7 +194,7 @@ class CertificateAuthority extends Object {
   }
 
   async getCertificateChain (serial) {
-    const top = await DB.certificates.findOne({ serial, mrn: new RegExp(`^${this.UID}:.+`)})
+    const top = await DB.certificates.findOne({ serial, mrn: new RegExp(`^${this.uid}:.+`)})
     const chain = top ? [top] : []
     let next = top ? top.parent : null
     while (next) {
@@ -220,7 +228,7 @@ class CertificateAuthority extends Object {
     const cert = await this._createCertificate(subject, days)
     cert.parent = this.fingerprint
     await DB.certificates.insert(cert)
-    console.debug(`Issued certificate ${cert.id} to ${subject.DN}`)
+    console.debug(`Issued certificate ${cert.serial} to ${subject.DN.uid}`)
     console.debug(cert.pem)
 
     // if a new keypair was created for the entity save it
@@ -245,7 +253,7 @@ class CertificateAuthority extends Object {
   }
 
   async responseForOCSPRequest (buffer) {
-    const req = new OCSPRequest(buffer, this.UID)
+    const req = new OCSPRequest(buffer, this.uid)
     const reqCerts = new Map(req.serials.map(s => [s, undefined]))
     const foundCerts = await DB.certificates.find({ serial: {$in: [...reqCerts.keys()]} }, { serial: 1, status: 1, _id: 0})
     const statuses = (foundCerts || []).reduce((obj, cert) => {
@@ -258,18 +266,24 @@ class CertificateAuthority extends Object {
     return await resp.toDER()
   }
 
-  static async initialize (config) {
+  static async initialize (mir, config) {
+    await MCPCertificate.initialize({spid: mir ? mir.uid : config.ipid })
+    if (mir) {
+      return mir
+    }
+    
     let root = {
       ipid: config.ipid,
       domain: config.domain,
       country: config.country,
       email: config.admin || `mir-admin@${config.domain}`
     }
-    const mir = Object.assign(
+    
+    mir = Object.assign(
       root,
       {
         email: config.email || `mir@${config.domain}`,
-        URL: config.url || `https://${config.domain}/${config.ipid}.html`
+        url: config.url || `https://${config.domain}/${config.ipid}.html`
       }
     )
 
@@ -289,8 +303,3 @@ class CertificateAuthority extends Object {
     return mir
   }
 }
-
-module.exports = {
-  CertificateAuthority
-}
-

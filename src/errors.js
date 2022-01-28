@@ -1,4 +1,4 @@
-class MirError extends Error {
+export class MirError extends Error {
   constructor (code, msg) {
     if (!MirError[code]) {
       throw new Error(`Invalid Mir error code ${code}`)
@@ -19,5 +19,3 @@ for (let code in Codes) {
     }
   })
 }
-
-module.exports = { MirError }

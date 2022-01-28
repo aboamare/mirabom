@@ -6,6 +6,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "type": "module",
   "author": "Robert Aarts",
   "license": "Apache-2.0",
   "dependencies": {
@@ -13,9 +14,11 @@
     "@hapi/hapi": "^20.2.1",
     "asn1js": "^2.2.0",
     "dayjs": "^1.10.7",
+    "es-main": "^1.0.2",
     "handlebars": "^4.7.7",
     "jose": "^4.3.7",
     "lokijs": "^1.5.12",
+    "mirau": "file:../MiraU",
     "nedb-2": "github:lokkilok/nedb",
     "pkijs": "^2.2.1",
     "uuid": "^8.3.2"

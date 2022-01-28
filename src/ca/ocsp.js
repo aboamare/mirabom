@@ -1,9 +1,8 @@
-const crypto = require('crypto')
-const asn1 = require('asn1js')
-const pki = require('pkijs')
-const oid = require('./mcp-oids')
+import crypto from 'crypto'
+import asn1 from 'asn1js'
+import pki from 'pkijs'
 
-const { MCPCertificate } = require('./certificate.js')
+import { MCPCertificate } from'./certificate.js'
 
 const hashAlgorithms = {
   '1.3.14.3.2.26': 'sha1',
@@ -20,7 +19,7 @@ const ExtensionIDs = extensions.reduce((map, [id, name]) => {
   return map
 }, new Map())
 
-class OCSPRequest extends pki.OCSPRequest {
+export class OCSPRequest extends pki.OCSPRequest {
   constructor (der, issuerUid) {
     const asn = asn1.fromBER(der)
     super({ schema: asn.result })
@@ -72,7 +71,7 @@ class OCSPRequest extends pki.OCSPRequest {
 
 }
 
-class OCSPResponse extends pki.OCSPResponse {
+export class OCSPResponse extends pki.OCSPResponse {
   constructor (issuer, result = 'success') {
     super()
     this._issuer = issuer
@@ -85,7 +84,7 @@ class OCSPResponse extends pki.OCSPResponse {
 
     const ocspBasicResp = new pki.BasicOCSPResponse()
   
-		ocspBasicResp.tbsResponseData.responderID = new MCPCertificate({DN: {UID: this._issuer.UID}}).subject
+		ocspBasicResp.tbsResponseData.responderID = new MCPCertificate({DN: {uid: this._issuer.uid}}).subject
 		ocspBasicResp.tbsResponseData.producedAt = new Date()
     ocspBasicResp.certs = [cert]
     this._basicResp = ocspBasicResp
@@ -175,5 +174,3 @@ class OCSPResponse extends pki.OCSPResponse {
     return resp
   }
 }
-
-module.exports = { OCSPRequest, OCSPResponse }

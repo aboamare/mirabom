@@ -1,6 +1,6 @@
-const Handlebars = require('handlebars')
+import Handlebars from 'handlebars'
 
-class EmailError extends Error {
+export class EmailError extends Error {
   constructor (code, msg) {
     if (!EmailError.Codes[code]) {
       throw new Error(`Invalid Email error code ${code}`)
@@ -8,14 +8,14 @@ class EmailError extends Error {
     super(msg || EmailError.Codes[code])
     this.code = code
   }
-}
 
-EmailError.Codes = {
-  InvalidMessage: 'Email message is invalid',
-  InvalidAddress: 'Email address is invalid',
-  NoRecipient: 'Email message without recipient',
-  NoContent: 'Email message with neither subject nor body or template',
-  TemplateError: 'Email template processing failed'
+  static Codes = {
+    InvalidMessage: 'Email message is invalid',
+    InvalidAddress: 'Email address is invalid',
+    NoRecipient: 'Email message without recipient',
+    NoContent: 'Email message with neither subject nor body or template',
+    TemplateError: 'Email template processing failed'
+  }
 }
 
 function EmailAddress (string) {
@@ -28,7 +28,7 @@ function EmailAddress (string) {
 
 const EmailTemplates = {}
 
-function registerTemplate (name, handlebarsCode) {
+export function registerTemplate (name, handlebarsCode) {
   try {
     EmailTemplates[name] = Handlebars.compile(handlebarsCode)
   } catch (err) {
@@ -93,20 +93,8 @@ const agents = {
 
 const agent = new agents[process.env['EMAIL_AGENT'] || 'ConsoleMailer']()
 
-function send ( emailMessage = {}) {
+export function send ( emailMessage = {}) {
   const msg = new EmailMessage(emailMessage)
   agent.send(msg)
 }
-
-module.exports = Object.assign(
-  { 
-    EmailError,
-    registerTemplate,
-    send 
-  }, 
-  Object.keys(EmailError.Codes).reduce((codes, code) => {
-    codes[code] = code
-    return codes
-  }, {})
-)
 

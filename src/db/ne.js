@@ -1,8 +1,8 @@
-const fs = require('fs/promises')
-const { promisify } = require('util')
+import fs from 'fs/promises'
+import { promisify } from 'util'
 
-const Datastore = require('nedb-2')
-const { resolve } = require('path')
+import Datastore from 'nedb-2'
+import { resolve } from 'path'
 
 class Collection extends Object {
   constructor (options) {
@@ -128,7 +128,7 @@ class Database extends Object {
 
 let DB
 
-module.exports = (options = {}) => {
+export default (options = {}) => {
   if (!DB) {
     DB = new Database(options)
   }

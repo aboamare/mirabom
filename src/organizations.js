@@ -1,13 +1,16 @@
-const Boom = require('@hapi/boom')
-const jose = require('jose')
-const uuid = require('uuid').v4
+import Boom from'@hapi/boom'
+import * as jose from 'jose'
+import {v4 as uuid} from'uuid'
+import { MCPEntity, MRN } from 'mirau'
 
-const { MirError } = require('./errors')
+import { MirError } from'./errors.js'
+import { CertificateAuthority } from'./ca/index.js'
 
-const DB = require('./db')(async db => {
+import db from'./db/index.js'
+const DB = db(async () => {
   await Organization.initialize()
 })
-const { CertificateAuthority } = require('./ca')
+
 
 const Config = {
   ipid: 'aboamare',
@@ -15,28 +18,18 @@ const Config = {
   domain: 'mir.aboamare.net'
 }
 
-function isMRN (urn) {
-  const re = /^urn:mrn(:[-_a-z0-9.]+)+$/
-  return re.test(urn)
-}
-
-function MRN (id) {
-  return isMRN(id) ? id : `urn:mrn:mcp:id:${Config.ipid}${id ? `:${id}` :''}`
-}
-
-class Entity extends Object {
+class Entity extends MCPEntity {
   constructor (props) {
-    super()
     if (props._id) {
-      props.UID = props._id
+      props.uid = props._id
       delete props._id
     }
-    Object.assign(this, props)
+    super(props)
   }
 
   async save () {
     const dbObj = Object.assign({}, this, {_id: this._id})
-    const dontSave = ['UID', 'public', 'private']
+    const dontSave = ['uid', 'public', 'private']
     dontSave.forEach(prop => {
       if (dbObj[prop] !== undefined) {
         delete dbObj[prop]
@@ -46,16 +39,11 @@ class Entity extends Object {
   }
 
   get _id () {
-    return this.UID
+    return this.uid
   }
-
-  get mrn () {
-    return MRN(this._id)
-  }
-
 }
 
-class Organization extends Entity {
+export class Organization extends Entity {
 
   constructor (props) {
     super(props)
@@ -73,7 +61,7 @@ class Organization extends Entity {
   }
 
   mrnFor (id) {
-    return isMRN(id) ? id : `${this.mrn}:${id}`
+    return MRN.test(id) ? id : `${this.mrn}:${id}`
   }
 
   suggestId (entity = {}) {
@@ -131,7 +119,7 @@ class Organization extends Entity {
           entity, 
           { 
             ipid,
-            UID: this.mrnFor(ipid)
+            uid: this.mrnFor(ipid)
           }
         ))
         await mir.issueCertificate(org, 'mir')
@@ -152,7 +140,7 @@ class Organization extends Entity {
      * - optional properties for the SAN in the certificate
      * 
      */
-    const supportedProps = ['callSign', 'country', 'domain', 'email', 'flagState', 'homePort', 'IMONumber', 'MMSI', 'name', 'organization', 'secondaryMRN', 'unit', 'URL']
+    const supportedProps = [...MCPEntity.RecognizedProperties]
     try {
       // verify the JWT, the "certificate request" should have the public key of the entity as JWK in the protected header
       const { payload, key } = await jose.flattenedVerify(jws, (protectedHeader, token) => {
@@ -173,8 +161,8 @@ class Organization extends Entity {
 
       for (const id of this.suggestId(subject)) {
         // try to use a nice memorable id for the subject
-        const UID = this.mrnFor(id)
-        const existing = await DB.entities.findOne({ _id: UID })
+        const uid = this.mrnFor(id)
+        const existing = await DB.entities.findOne({ _id: uid })
         if (!existing) {
           // now create the certificate
           const mir = new CertificateAuthority(this)
@@ -182,7 +170,7 @@ class Organization extends Entity {
             this._asTemplate(['email']), 
             subject,
             { 
-              UID,
+              uid,
               mir: this.ipid
              }
           ))
@@ -197,6 +185,10 @@ class Organization extends Entity {
       console.warn(err)
       throw err
     }
+  }
+
+  async addAttestor (jwt) {
+
   }
 
   static _roles = {
@@ -225,16 +217,18 @@ class Organization extends Entity {
      * Create a root and CA certificate for that top level organization.
      * Send an email confirmation request to the owner email address.
      */
+
     Object.assign(Config, config)
     let mir = await this.get(Config.ipid)
-    if (!mir) {
-      mir = new Organization(await CertificateAuthority.initialize(Config))
+    mir = await CertificateAuthority.initialize(mir, Config)
+    if (! (mir instanceof Organization)) {
+      mir = new Organization(mir)
       await mir.save()
     }
   }
 }
 
-const routes = [
+export const routes = [
   {
     /*
      * Issue a certificate to the entity that PUTs this request.
@@ -334,11 +328,64 @@ const routes = [
         return Boom.badRequest()
       }
     }
+  },
+  {
+    /*
+     * Process a submitted attestation, and add the issuer to the list of attestors.
+     */
+    path: '/{ipid}/matp',
+    method: 'POST',
+    handler: async function (req, h) {
+      const ip = await Organization.get(req.params.ipid)
+      if (!ip) {
+        throw Boom.notFound()
+      }
+      try {
+        await ip.addAttestor(req.payload)
+        return h.response()
+      } catch (err) {
+        console.warn(err)
+        return Boom.badRequest()
+      }
+    }
+  },
+  {
+    /*
+     * Return a list of attestors.
+     */
+    path: '/{ipid}/matp',
+    method: 'GET',
+    handler: async function (req, h) {
+      const ip = await Organization.get(req.params.ipid)
+      if (!ip) {
+        throw Boom.notFound()
+      }
+      try {
+        return ip.attestors || []
+      } catch (err) {
+        console.warn(err)
+        return Boom.badRequest()
+      }
+    }
+  },
+  {
+    /*
+     * Return an attestion for the requested MIR.
+     */
+    path: '/{ipid}/matp/{mrn}',
+    method: 'GET',
+    handler: async function (req, h) {
+      const ip = await Organization.get(req.params.ipid)
+      if (!ip) {
+        throw Boom.notFound()
+      }
+      try {
+        const mir = new CertificateAuthority(ip)
+        return await mir.issueAttestionFor(req.params.mrn)
+      } catch (err) {
+        console.warn(err)
+        return Boom.badRequest()
+      }
+    }
   }
 ]
-
-
-module.exports = {
-  Organization,
-  routes 
-}

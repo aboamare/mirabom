@@ -1,5 +1,5 @@
-const Loki = require('./loki')
-const Ne = require('./ne')
+import Loki from './loki.js'
+import Ne from './ne.js'
 
 const Collections = [
   { name: 'keys', unique: '_id', clone: true, cloneMethod: 'shallow' },   // '_id' index needed for Loki, Ne/Mongo always have that
@@ -7,7 +7,7 @@ const Collections = [
   { name: 'entities', unique: '_id'}                                      // '_id' index needed for Loki, Ne/Mongo always have that
 ]
 
-module.exports = function (cb) {
+export default function (cb) {
   const options = {
     onReady: async (db) => {
       await Promise.all(Collections.map(coll => db.ensureCollection(coll.name, coll)))
