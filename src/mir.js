@@ -126,10 +126,7 @@ export class MaritimeIdentityRegistry extends Entity {
       }
       //TODO: add references to certificate policy statements
 
-      //TODO: add "x5u" 
-      //TODO: add "attestations url"
-
-      await cert.sign(this.privateKey, this.algorithm)
+      await cert.sign(this.privateKey, this.signatureAlgorithm)
       await cert.updateFingerprint()
       let certificateBuffer = await cert.toSchema(true).toBER(false)
       certificateBuffer = Buffer.from(certificateBuffer).toString('base64')

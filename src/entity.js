@@ -104,7 +104,11 @@ export class Entity extends MCPEntity {
   }
 
   get signatureAlgorithm () {
-    return this._signatureAlgorithm || this.algorithm
+    const signatureAlgorithms = {
+      'ES256': 'SHA-256',
+      'ES384': 'SHA-384'
+    }
+    return this._signatureAlgorithm || signatureAlgorithms[this.algorithm] || 'SHA-384'
   }
 
   get pem () {
