@@ -1,16 +1,15 @@
 import dayjs from 'dayjs'
 import { v4 as uuid } from 'uuid'
 
-import { getCrypto, MCPCertificate } from './certificate.js'
-import  { MCPEntity } from 'mirau'
+import { MCPCertificate } from './certificate.js'
+import  { Entity } from './entity.js'
 import { OCSPRequest, OCSPResponse } from './ocsp.js'
-
-import db from'../db/index.js'
+import db from'./db/index.js'
 const DB = db()
 
-export class CertificateAuthority extends Object {
+export class MaritimeIdentityRegistry extends Entity {
   constructor (organization) {
-    super()
+    super(organization)
     Object.assign(this, organization)
 
     if (!this.crl && this.domain && this.ipid) {
@@ -30,7 +29,7 @@ export class CertificateAuthority extends Object {
     this._dn = obj
   }
 
-  _SAN (entity, fields = [...MCPEntity.RecognizedProperties]) {
+  _SAN (entity, fields = [...Entity.RecognizedProperties]) {
     return fields.reduce((san, field) => {
       const value = entity[field]
       if (!!value) {
@@ -42,11 +41,11 @@ export class CertificateAuthority extends Object {
 
   _createSubject (entity, type = 'entity') {
     /*
-     * Return an Object with all the properties needed to populate a certificate for the given entity.
+     * Return an Entity with all the properties needed to populate a certificate for the given entity.
      */
     const types = {
       entity: obj => {
-        return Object.assign(
+        return new Entity(Object.assign(
           {
             DN: { uid: obj.uid || `${this.uid}:${uuid()}` },
             SAN: this._SAN(obj),
@@ -56,10 +55,10 @@ export class CertificateAuthority extends Object {
             x5u: cert => `https://${this.domain}/${this.ipid}/certificates/${cert.serial}.x5u`
           }, 
           obj
-        )
+        ))
       },
       mir: obj => {
-        return Object.assign(
+        return new Entity(Object.assign(
           {
             DN: { uid: obj.uid || `urn:mrn:mcp:id:${obj.ipid || obj.organization}` },
             SAN: this._SAN({
@@ -78,10 +77,10 @@ export class CertificateAuthority extends Object {
             matp: obj.matp || `https://${obj.domain}/${obj.ipid}/matp`
           },
           obj
-        )
+        ))
       },
       root: obj => {
-        return Object.assign(
+        return new Entity(Object.assign(
           {
             DN: {
               organization: obj.organization || obj.ipid,
@@ -95,64 +94,19 @@ export class CertificateAuthority extends Object {
             keyUsage: ['keyCertSign'],
           },
           obj
-        )
+        ))
       }
     }
     return types[type](entity)
   }
   
-  async _createKey (namedCurve = 'P-384') {
-    try {
-      const crypto = getCrypto()
-      const keyPair = await crypto.generateKey(
-        {
-          name: "ECDSA",
-          namedCurve 
-        },
-        true,
-        ["sign", "verify"]
-      )
-      const jwkPair = {}
-      jwkPair.private = await crypto.exportKey('jwk', keyPair.privateKey)
-      jwkPair.public = await crypto.exportKey('jwk', keyPair.publicKey)
-      console.debug(jwkPair)
-      return jwkPair
-    } catch (err) {
-      console.error(err)
-    }
-  }
-
-  async _useKey (keyPair) {
-    const crypto = getCrypto()
-    this.public = keyPair.public
-    // ensure that the private key is ready to use for signing
-    this.private = await crypto.importKey('jwk', keyPair.private, {name: 'ECDSA', namedCurve: keyPair.private.crv}, keyPair.private.ext, keyPair.private.key_ops)
-    this.fingerprint = keyPair._id
-  }
-
-  async _getKey (fingerprint) {
-    return DB.keys.findOne({_id: fingerprint || this.certificates[0]})
-  }
-
-  async _loadPrivateKey () {
-    const keyPair = await this._getKey()
-    await this._useKey(keyPair)
-    this.algorithm = "SHA-384"
-  }
-
-  async _loadOwnPEM () {
-    const cert = await DB.certificates.findOne({ _id: this.certificates[0] })
-    this.pem = cert.pem, 
-    this.fingerprint = cert._id
-  }
-
   async _createCertificate (subject, days = 731, algorithm = "SHA-384" ) {
     try {
       const cert = new MCPCertificate(subject)
       cert.setIssuer(this.DN)
       cert.notBefore.value = new Date()
       cert.notAfter.value = dayjs().add(days, 'days').toDate()
-      cert.subjectPublicKeyInfo.fromJSON(subject.public)
+      cert.subjectPublicKeyInfo.fromJSON(subject.publicKey)
       await cert.setSubjectKeyIdentifier()
       await cert.setAuthorityKeyIdentifier(this)
       
@@ -175,7 +129,7 @@ export class CertificateAuthority extends Object {
       //TODO: add "x5u" 
       //TODO: add "attestations url"
 
-      await cert.sign(this.private, algorithm)
+      await cert.sign(this.privateKey, this.algorithm)
       await cert.updateFingerprint()
       let certificateBuffer = await cert.toSchema(true).toBER(false)
       certificateBuffer = Buffer.from(certificateBuffer).toString('base64')
@@ -191,6 +145,14 @@ export class CertificateAuthority extends Object {
       console.log(err)
       throw err
     }
+  }
+
+  async findCertificate (query, criteria) {
+    const candidates = await DB.certificates.find(query)
+    return candidates.find(async function (record) {
+      const cert = await MCPCertificate.fromPEM(record.pem)
+      return criteria(cert)
+    })
   }
 
   async getCertificateChain (serial) {
@@ -211,16 +173,14 @@ export class CertificateAuthority extends Object {
 
   async issueCertificate (entity, type = 'entity', days = 731) {
     // make sure this CA has its private key
-    if (!this.private) {
-      const keyPair = await this._getKey()
-      await this._useKey(keyPair)
+    if (!this.privateKey) {
+      await this.loadKey()
     }
 
     // prepare the entity as subject for a certificate
     const subject = this._createSubject(entity, type)
-    if (!subject.public) {
-      const keyPair = await this._createKey()
-      Object.assign(subject, keyPair)
+    if (!subject.publicKey) {
+      await subject.createKey()
     }
 
     // issue a fresh certificate
@@ -232,11 +192,11 @@ export class CertificateAuthority extends Object {
     console.debug(cert.pem)
 
     // if a new keypair was created for the entity save it
-    if (subject.private) {
+    if (subject.privateKey) {
       await DB.keys.insert({
         _id: cert._id,
-        private: subject.private,
-        public: subject.public
+        _private: subject.privateKey,
+        _public: subject.publicKey
       })
     }
 
@@ -260,46 +220,50 @@ export class CertificateAuthority extends Object {
       obj[cert.serial] = cert.status || 'good'
       return obj
     }, {})
-    await this._loadOwnPEM()
+    await this.loadOwnPEM()
     const resp = OCSPResponse.to(req, this, statuses)
-    await this._loadPrivateKey()
+    await this.loadKey()
     return await resp.toDER()
   }
 
-  static async initialize (mir, config) {
-    await MCPCertificate.initialize({spid: mir ? mir.uid : config.ipid })
-    if (mir) {
-      return mir
-    }
-    
-    let root = {
+  static async initialize (config) {
+    let root = new Entity({
       ipid: config.ipid,
       domain: config.domain,
       country: config.country,
       email: config.admin || `mir-admin@${config.domain}`
-    }
+    })
     
-    mir = Object.assign(
+    const mir = new Entity(Object.assign(
+      {},
       root,
       {
         email: config.email || `mir@${config.domain}`,
         url: config.url || `https://${config.domain}/${config.ipid}.html`
       }
-    )
+    ))
 
-    const rootCA = new CertificateAuthority(root)
-    const rootKey = await rootCA._createKey()
-    await rootCA._useKey(rootKey)
+    const rootCA = this.from(root)
+    const rootKey = await rootCA.createKey()
+    await rootCA.loadKey()
+    
+    // create a self-signed root cert
     root = rootCA._createSubject(root, 'root')
-    root.public = rootKey.public
-    rootCA.DN = root.DN // create a self-signed cert
+    root.publicKey = rootCA.publicKey
+    rootCA.DN = root.DN 
     const rootCert = await rootCA._createCertificate(root, 10 * 365 + 2)
     rootKey._id = rootCert._id
+    rootCA._fingerprint = rootCert._id
     await DB.certificates.insert(rootCert)
     await DB.keys.insert(rootKey)
 
+    // create the cert for the MIR
     await rootCA.issueCertificate(mir, 'mir', 5 * 365 + 1)
     mir.root = rootCert._id
     return mir
+  }
+
+  static from (entity) {
+    return new this(entity)
   }
 }

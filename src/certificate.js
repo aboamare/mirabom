@@ -1,6 +1,4 @@
-import asn1  from 'asn1js'
-import pki  from 'pkijs'
-import { MCPCertificate as pkiCertificate, OID }  from 'mirau'
+import { asn1, pki, MCPCertificate as pkiCertificate, OID } from 'mirau'
 
 export function getCrypto () {
   return pki.getEngine().subtle
@@ -151,7 +149,7 @@ export class MCPCertificate extends pkiCertificate {
   
   async setAuthorityKeyIdentifier (issuer) {
     const crypto = getCrypto()
-    const publicKeyInfo = new pki.PublicKeyInfo({json: issuer.public})
+    const publicKeyInfo = new pki.PublicKeyInfo({json: issuer.publicKey})
     const keyBytes = publicKeyInfo.subjectPublicKey.valueBlock.valueHex
     const sha1 = await crypto.digest('SHA-1', keyBytes)
     const keyIdentifier = new asn1.OctetString({valueHex: sha1})

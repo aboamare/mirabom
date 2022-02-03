@@ -1,6 +1,5 @@
 import crypto from 'crypto'
-import asn1 from 'asn1js'
-import pki from 'pkijs'
+import { asn1, pki } from 'mirau'
 
 import { MCPCertificate } from'./certificate.js'
 
@@ -76,17 +75,15 @@ export class OCSPResponse extends pki.OCSPResponse {
     super()
     this._issuer = issuer
 
-    const cert = MCPCertificate.fromPEM(issuer.pem)
-
     this.responseStatus.valueBlock.valueDec = OCSPResponse.Status[result]
     this.responseBytes = new pki.ResponseBytes()
     this.responseBytes.responseType = "1.3.6.1.5.5.7.48.1.1"
 
     const ocspBasicResp = new pki.BasicOCSPResponse()
   
-		ocspBasicResp.tbsResponseData.responderID = new MCPCertificate({DN: {uid: this._issuer.uid}}).subject
+		ocspBasicResp.tbsResponseData.responderID = (new MCPCertificate({DN: {uid: this._issuer.uid}})).subject
+    
 		ocspBasicResp.tbsResponseData.producedAt = new Date()
-    ocspBasicResp.certs = [cert]
     this._basicResp = ocspBasicResp
   }
 
@@ -104,8 +101,8 @@ export class OCSPResponse extends pki.OCSPResponse {
     }))
   }
 
-  _addCertStatus (certId, status = 'good') {
-    function constructStatus (status = 'good') {
+  _addCertStatus (certId, status ) {
+    function constructStatus (status ) {
       if (status === 'good') {
         return new asn1.Primitive({
           idBlock: {
@@ -145,7 +142,10 @@ export class OCSPResponse extends pki.OCSPResponse {
   }
 
   async toDER () {
-    await this._basicResp.sign(this._issuer.private, this._issuer.algorithm)
+    const cert = await MCPCertificate.fromPEM(this._issuer.pem)
+    this._basicResp.certs = [cert]
+
+    await this._basicResp.sign(this._issuer.privateKey, this._issuer.signatureAlgorithm)
     const encodedOCSPBasicResp = this._basicResp.toSchema().toBER(false)
 		this.responseBytes.response = new asn1.OctetString({ valueHex: encodedOCSPBasicResp })
     return Buffer.from(this.toSchema().toBER(false))

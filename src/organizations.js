@@ -1,10 +1,11 @@
 import Boom from'@hapi/boom'
 import * as jose from 'jose'
 import {v4 as uuid} from'uuid'
-import { MCPEntity, MRN } from 'mirau'
+import { Attestation, initialize as initMirau, MRN, Options } from 'mirau'
 
+import { Entity } from './entity.js'
 import { MirError } from'./errors.js'
-import { CertificateAuthority } from'./ca/index.js'
+import { MaritimeIdentityRegistry } from'./mir.js'
 
 import db from'./db/index.js'
 const DB = db(async () => {
@@ -18,28 +19,20 @@ const Config = {
   domain: 'mir.aboamare.net'
 }
 
-class Entity extends MCPEntity {
-  constructor (props) {
-    if (props._id) {
-      props.uid = props._id
-      delete props._id
-    }
-    super(props)
+class OrganizationOptions extends Options {
+  constructor (org) {
+    super (org.options)
+    this.org = org
   }
 
-  async save () {
-    const dbObj = Object.assign({}, this, {_id: this._id})
-    const dontSave = ['uid', 'public', 'private']
-    dontSave.forEach(prop => {
-      if (dbObj[prop] !== undefined) {
-        delete dbObj[prop]
-      }
-    })
-    await DB.entities.upsert(dbObj)
+  trust (certificate) {
+    super.trust(certificate)
+    this.org.trust(certificate)
   }
 
-  get _id () {
-    return this.uid
+  noLongerTrust (certificate) {
+    super.noLongerTrust(certificate)
+    this.org.noLongerTrust(certificate)
   }
 }
 
@@ -48,12 +41,23 @@ export class Organization extends Entity {
   constructor (props) {
     super(props)
 
-    this.type = 'organization'
-
     if (this.email && !this.owners) {
       this.owners = [this.email]
     }
 
+    if (!this.options) {
+      this.options = { trusted: new Map(), spid: this.uid, trustOwnSubjects: true }
+    } else if (Array.isArray(this.options.trusted)) {
+      this.options.trusted = new Map(this.options.trusted)
+    }
+  }
+
+  async save (force = false) {
+    if (force || this._shouldSave) {
+      this.options.trusted = [...this.options.trusted]
+      await super.save()
+      this.options.trusted = new Map(this.options.trusted)
+    }
   }
 
   get mir() {
@@ -99,6 +103,10 @@ export class Organization extends Entity {
     return Object.assign(template, subject)
   }
 
+  asMir () {
+    return MaritimeIdentityRegistry.from(this)
+  }
+
   async createOrganization (entity = {}) {
     /*
      * Create a new organization in the name space of this (MIR) organization.
@@ -113,7 +121,7 @@ export class Organization extends Entity {
     for (const ipid of this.suggestId(entity)) {
       const existing = await DB.entities.findOne({ipid})
       if (!existing) {
-        const mir = new CertificateAuthority(this)
+        const mir = this.asMir()
         const org = new Organization(Object.assign(
           entity.organization ? this._asTemplate() : this._asOrganizationalUnit(entity), 
           entity, 
@@ -123,7 +131,7 @@ export class Organization extends Entity {
           }
         ))
         await mir.issueCertificate(org, 'mir')
-        await org.save()
+        await org.save(true)
         return org
       }
     }
@@ -140,7 +148,7 @@ export class Organization extends Entity {
      * - optional properties for the SAN in the certificate
      * 
      */
-    const supportedProps = [...MCPEntity.RecognizedProperties]
+    const supportedProps = [...Entity.RecognizedProperties]
     try {
       // verify the JWT, the "certificate request" should have the public key of the entity as JWK in the protected header
       const { payload, key } = await jose.flattenedVerify(jws, (protectedHeader, token) => {
@@ -155,7 +163,7 @@ export class Organization extends Entity {
         }
         return obj
       }, {})
-      subject.public = await jose.exportJWK(key)
+      subject.publicKey = await jose.exportJWK(key)
 
       //TODO: support requests for a new cert
 
@@ -165,7 +173,7 @@ export class Organization extends Entity {
         const existing = await DB.entities.findOne({ _id: uid })
         if (!existing) {
           // now create the certificate
-          const mir = new CertificateAuthority(this)
+          const mir = this.asMir()
           const entity = new Entity(Object.assign(
             this._asTemplate(['email']), 
             subject,
@@ -187,8 +195,73 @@ export class Organization extends Entity {
     }
   }
 
-  async addAttestor (jwt) {
+  get validationOptions () {
+    if (!this._options) {
+      this._options = new OrganizationOptions(this)
+    }
+    return this._options
+  }
 
+  trust (certificate) {
+    const { uid, x5t256 } = certificate
+    this.options.trusted.set(x5t256, uid)
+    this._shouldSave = true
+  }
+
+  noLongerTrust (certificate) {
+    try {
+      this.options.trusted.delete(certificate.fingerprint)
+      this._shouldSave = true
+    } catch (err) {
+      console.info(err)
+    }
+  }
+
+  async trusts (uid, x5t256) {
+    try {
+      const mrn = new MRN(uid)
+      let trusted = [...this.options.trusted].find((x5t256, u) => u === uid)
+      if (!trusted && this.validationOptions.trustOwnSubjects && mrn.issuedBy(this.uid)) {
+        const mir = this.asMir()
+        trusted = await mir.findCertificate({mrn: uid}, cert => cert.x5t256 === x5t256)
+      }
+      return !!trusted  
+    } catch (err) {
+      console.warn(err)
+      return false
+    }
+  }
+
+  async addAttestor (jwt) {
+    try {
+      const attn = await Attestation.fromJWT(jwt, this.validationOptions)
+      if (attn.subject.uid !== this.uid) {
+        throw Error(`Attestation is not about ${this.uid} but about ${attn.subject.uid}`)
+      }
+      if (attn.mirOk || attn.mirEndorsed) {
+        const url = (new URL(attn.issuer.matpUrl)).toString()
+        if (this.attestors === undefined) {
+          this.attestors = {}
+        }
+        this.attestors[attn.issuer.uid] = url
+        await this.save()
+      } else {
+        throw Error(`Attestation is not positive`)
+      }
+    } catch (err) {
+      console.info('Received invalid attestation')
+      console.info(err)
+    }
+  }
+
+  async issueAttestionFor (uid, x5t256) {
+    const isTrusted = await this.trusts(uid, x5t256)
+    if (isTrusted) {
+      await this.loadKey(null, false) // 'false' to keep key in jwk format
+      const attn = new Attestation(this, {uid, x5t256})
+      return await attn.asJWT()
+    }
+    return undefined
   }
 
   static _roles = {
@@ -217,13 +290,13 @@ export class Organization extends Entity {
      * Create a root and CA certificate for that top level organization.
      * Send an email confirmation request to the owner email address.
      */
-
+    await initMirau()
     Object.assign(Config, config)
     let mir = await this.get(Config.ipid)
-    mir = await CertificateAuthority.initialize(mir, Config)
-    if (! (mir instanceof Organization)) {
+    if (!mir) {
+      mir = await MaritimeIdentityRegistry.initialize(Config)
       mir = new Organization(mir)
-      await mir.save()
+      await mir.save(true)
     }
   }
 }
@@ -276,12 +349,12 @@ export const routes = [
     path: '/{ipid}/certificates/{serial}.x5u',
     method: 'GET',
     handler: async function (req, h) {
-      const ip = await Organization.get(req.params.ipid)
-      if (!ip) {
+      const idp = await Organization.get(req.params.ipid)
+      if (!idp) {
         throw Boom.notFound()
       }
       try {
-        const mir = new CertificateAuthority(ip)
+        const mir = idp.asMir()
         const chain = await mir.getCertificateChain(req.params.serial)
         if (Array.isArray(chain) && chain.length > 0) {
           return h.response(chain.map(cert => cert.pem).join(''))
@@ -309,12 +382,12 @@ export const routes = [
       }
     },
     handler: async function (req, h) {
-      const ip = await Organization.get(req.params.ipid)
-      if (!ip) {
+      const idp = await Organization.get(req.params.ipid)
+      if (!idp) {
         throw Boom.notFound()
       }
       try {
-        const mir = new CertificateAuthority(ip)
+        const mir = idp.asMir()
 
         // copy the raw, binary, data into an new ArrayBuffer
         const buf = req.payload
@@ -336,12 +409,12 @@ export const routes = [
     path: '/{ipid}/matp',
     method: 'POST',
     handler: async function (req, h) {
-      const ip = await Organization.get(req.params.ipid)
-      if (!ip) {
+      const idp = await Organization.get(req.params.ipid)
+      if (!idp) {
         throw Boom.notFound()
       }
       try {
-        await ip.addAttestor(req.payload)
+        await idp.addAttestor(req.payload)
         return h.response()
       } catch (err) {
         console.warn(err)
@@ -356,12 +429,12 @@ export const routes = [
     path: '/{ipid}/matp',
     method: 'GET',
     handler: async function (req, h) {
-      const ip = await Organization.get(req.params.ipid)
-      if (!ip) {
+      const idp = await Organization.get(req.params.ipid)
+      if (!idp) {
         throw Boom.notFound()
       }
       try {
-        return ip.attestors || []
+        return (idp.attestors || {}).values()
       } catch (err) {
         console.warn(err)
         return Boom.badRequest()
@@ -375,13 +448,17 @@ export const routes = [
     path: '/{ipid}/matp/{mrn}',
     method: 'GET',
     handler: async function (req, h) {
-      const ip = await Organization.get(req.params.ipid)
-      if (!ip) {
+      const idp = await Organization.get(req.params.ipid)
+      if (!idp) {
         throw Boom.notFound()
       }
       try {
-        const mir = new CertificateAuthority(ip)
-        return await mir.issueAttestionFor(req.params.mrn)
+        const token = await idp.issueAttestionFor(req.params.mrn, req.query.x5t256)
+        if (token) {
+          return h.response(token).type('text/plain')
+        } else {
+          return Boom.notFound()
+        }
       } catch (err) {
         console.warn(err)
         return Boom.badRequest()
