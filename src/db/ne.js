@@ -71,6 +71,11 @@ class Collection extends Object {
   }
   
   upsert (doc) {
+    const _id = doc._id
+    const query = _id ? { _id } : doc
+    if (_id) {
+      delete doc._id
+    }
     return this.update(doc, {$set: doc}, {upsert: true})  
   }
 }

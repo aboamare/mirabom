@@ -2,7 +2,7 @@
 
 import Hapi from '@hapi/hapi'
 
-import {routes as  organizations} from './organizations.js'
+import { routes as  organizations } from './organizations.js'
 
 const server = Hapi.server({
   port: parseInt(process.env['HTTP_PORT'] || '3001'),

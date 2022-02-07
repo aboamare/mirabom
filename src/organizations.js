@@ -1,7 +1,7 @@
 import Boom from'@hapi/boom'
 import * as jose from 'jose'
 import {v4 as uuid} from'uuid'
-import { Attestation, initialize as initMirau, MRN, Options } from 'mirau'
+import { Attestation, fetch, initialize as initMirau, MRN, Options } from 'mirau'
 
 import { Entity } from './entity.js'
 import { MirError } from'./errors.js'
@@ -46,7 +46,10 @@ export class Organization extends Entity {
     }
 
     if (!this.options) {
-      this.options = { trusted: new Map(), spid: this.uid, trustOwnSubjects: true }
+      this.options = { spid: this.uid, 
+        trusted: new Map(), 
+        trustOwnSubjects: true,
+        trustOwnIssuer: true }
     } else if (Array.isArray(this.options.trusted)) {
       this.options.trusted = new Map(this.options.trusted)
     }
@@ -239,12 +242,12 @@ export class Organization extends Entity {
         throw Error(`Attestation is not about ${this.uid} but about ${attn.subject.uid}`)
       }
       if (attn.mirOk || attn.mirEndorsed) {
-        const url = (new URL(attn.issuer.matpUrl)).toString()
+        const url = (new URL(attn.issuer.matp)).toString()
         if (this.attestors === undefined) {
           this.attestors = {}
         }
         this.attestors[attn.issuer.uid] = url
-        await this.save()
+        this._shouldSave = true
       } else {
         throw Error(`Attestation is not positive`)
       }
@@ -298,6 +301,11 @@ export class Organization extends Entity {
       mir = new Organization(mir)
       await mir.save(true)
     }
+
+    // rewrite URLs to this installation. This ensures that OCSP, MATP and certificate chain
+    // between organizations created in this installation will work.
+    const rewrittenBaseUrl = `http://localhost:${process.env['HTTP_PORT'] || '3001'}`
+    fetch.addRule(new RegExp(`^http(s){0,1}://${Config.domain}`), rewrittenBaseUrl)
   }
 }
 
@@ -415,6 +423,7 @@ export const routes = [
       }
       try {
         await idp.addAttestor(req.payload)
+        await idp.save()
         return h.response()
       } catch (err) {
         console.warn(err)
@@ -434,7 +443,7 @@ export const routes = [
         throw Boom.notFound()
       }
       try {
-        return (idp.attestors || {}).values()
+        return Object.values(idp.attestors || {})
       } catch (err) {
         console.warn(err)
         return Boom.badRequest()

@@ -5,6 +5,7 @@ import { MCPCertificate } from './certificate.js'
 import  { Entity } from './entity.js'
 import { OCSPRequest, OCSPResponse } from './ocsp.js'
 import db from'./db/index.js'
+import { MRN } from 'mirau'
 const DB = db()
 
 export class MaritimeIdentityRegistry extends Entity {
@@ -153,12 +154,12 @@ export class MaritimeIdentityRegistry extends Entity {
   }
 
   async getCertificateChain (serial) {
-    const top = await DB.certificates.findOne({ serial, mrn: new RegExp(`^${this.uid}:.+`)})
+    const top = await DB.certificates.findOne({ serial, mrn: new RegExp(`^${this.uid}(:[_-a-z0-9])?`)})
     const chain = top ? [top] : []
     let next = top ? top.parent : null
     while (next) {
       const cert = await DB.certificates.findOne({ _id: next })
-      if (cert) {
+      if (cert && MRN.test(cert.mrn)) {
         chain.push(cert)
         next = cert.parent
       } else {
